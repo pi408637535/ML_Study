@@ -17,7 +17,7 @@ import copy,time
 
 
 file_path = '/Users/piguanghua/Downloads/GenPics'
-BATCH_SIZE = 16
+BATCH_SIZE = 2
 EPOCH = 10
 device = t.device("cuda" if t.cuda.is_available() else "cpu")
 
@@ -97,7 +97,7 @@ class CNN(nn.Module):
 
 
 # Train the net
-class nCrossEntropyLoss(t.nn.Module):
+class nCrossEntropyLoss(nn.Module):
 
     def __init__(self, n=4):
         super(nCrossEntropyLoss, self).__init__()
@@ -106,13 +106,24 @@ class nCrossEntropyLoss(t.nn.Module):
         self.loss = nn.CrossEntropyLoss()
 
     def forward(self, output, label):
+
+        batch_label = label.view(-1, 4)
+        batch_output = output.view(-1, 4, 10)
+
+
+        for i in range(BATCH_SIZE):
+            for batch_label_item in batch_label[i]:
+                label_batch_item = []
+
+
+
+
         output_t = output[:, 0:10]
         label = t.tensor(t.LongTensor(label.data.cpu().numpy())).to(device)
         label_t = label[:, 0]
 
         for i in range(1, self.n):
-            output_t = t.cat((output_t, output[:, 10 * i:10 * i + 10]),
-                                 0)  # 损失的思路是将一张图平均剪切为4张小图即4个多分类，然后再用多分类交叉熵方损失
+            output_t = t.cat((output_t, output[:, 10 * i:10 * i + 10]),0)  # 损失的思路是将一张图平均剪切为4张小图即4个多分类，然后再用多分类交叉熵方损失
             label_t = t.cat((label_t, label[:, i]), 0)
             self.total_loss = self.loss(output_t, label_t)
 
@@ -152,6 +163,7 @@ for epoch in range(EPOCH):
         optimizer.zero_grad()
 
         output = net(inputs)  # (bs, 40)
+        print(label)
         loss = loss_func(output, label)
 
         for i in range(4):
