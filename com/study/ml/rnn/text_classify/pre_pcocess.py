@@ -79,9 +79,10 @@ def generate_category_dict(input_file, category_file):
 
 
 if __name__ == '__main__':
-    #generate_seg_file(train_file, seg_train_file)
-    #generate_seg_file(val_file, seg_val_file)
-    #generate_seg_file(test_file, seg_test_file)
+    generate_seg_file(train_file, seg_train_file)
+    generate_seg_file(val_file, seg_val_file)
+    generate_seg_file(test_file, seg_test_file)
 
-    #generate_vacab_file(seg_train_file, vocab_file)
+    generate_vacab_file(seg_train_file, vocab_file)
+
     generate_category_dict(train_file, category_file)
