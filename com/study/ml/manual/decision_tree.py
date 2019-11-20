@@ -116,6 +116,5 @@ if __name__ == '__main__':
     decision_tree = {}
     print(create_decision_tree(df))
 
-    pass
 
 
