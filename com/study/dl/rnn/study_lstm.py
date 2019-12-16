@@ -27,7 +27,7 @@ class LSTMModel(nn.Module):
         #embedding: batch,seq_len, embed_size
         #output: batch,seq_len,dicection*hidden_size
         #hidden:(h_0, c_0) batch,layer*diection, hidden_size
-        output, hidden = self.lstm(embedding)
+        output, hidden = self.lstm(embedding, hidden)
 
         output = output.contiguous().view(output.shape[0] * output.shape[1], output.shape[2])
         #out: seq_len * vocab_size
