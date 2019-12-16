@@ -14,7 +14,7 @@ from torchtext import datasets
 from sklearn.metrics import accuracy_score
 import time
 
-MAX_VOCAB_SIZE = 25004
+MAX_VOCAB_SIZE = 25002
 BATCH_SIZE = 64
 SEED = 1
 HIDDEN_SIZE = 256
@@ -46,11 +46,13 @@ class MyModel(nn.Module):
         # hidden:(h_0, c_0)
         # h_0: batch, layers*diection,hidden_size
         # c_0: batch, layers*diection,hidden_size
-        output, hidden = self.lstm(embedding, hidden)
+        print(hidden[0].shape)
+        output, hidden = self.lstm(embedding)
+        # print("aaaa",hidden[0].shape)
 
-        output = output.contiguous().view(output.shape[0] * output.shape[1], output.shape[2])
-        out = self.fc(output)
-        return out.view(output.shape[0], output.shape[1], output.shape[1]), hidden
+        out = self.fc(t.squeeze(hidden[0]))
+        # print("out",out.shape)
+        return out, hidden
 
     def init_hidden(self, batch, requires_grad=True):
         weight = next(self.parameters())
@@ -62,8 +64,10 @@ class MyModel(nn.Module):
 
 
 def binary_accuracy(preds, y):
-    rounted_preds = t.round(t.sigmoid(preds))
-    return accuracy_score(rounted_preds.cpu().numpy(), y.numpy())
+    rounded_preds = t.round(t.sigmoid(preds))
+    correct = (rounded_preds == y).float()  # convert into float for division
+    acc = correct.sum() / len(correct)
+    return acc
 
 
 def train(model, iterator, optimizer, crit):
@@ -77,8 +81,10 @@ def train(model, iterator, optimizer, crit):
             data, target = data.cuda(), target.cuda()
         data.t_()
         output, hidden = model(data, hidden)
-        loss = crit(output, target)
-        acc = binary_accuracy(output, target)
+
+        print("train", target.shape, output.shape)
+        loss = crit(t.unsqueeze(target, -1), output)
+        acc = binary_accuracy(output, t.unsqueeze(target, -1))
 
         optimizer.zero_grad()
         loss.backward()
@@ -100,13 +106,13 @@ def eval(model, iterator, optimizer, crit):
             data, target = data.cuda(), target.cuda()
         data.t_()
         output, hidden = model(data, hidden)
-        loss = crit(output, target)
 
-        acc = binary_accuracy(output, target)
-        epoch_loss += loss.item() * len(batch)
-        epoch_acc += acc * len(batch)
+        # print("train",target.shape, output.shape)
+        loss = crit(t.unsqueeze(target, -1), output)
+        acc = binary_accuracy(output, t.unsqueeze(target, -1))
 
-        optimizer.step()
+        epoch_loss += loss.item()
+        epoch_acc += acc
 
     model.train()
     return epoch_loss / len(iterator), epoch_acc / len(iterator)
@@ -141,8 +147,8 @@ if __name__ == '__main__':
 
     LABEL.build_vocab(train_data)
 
-    print("text.vocab", len(TEXT.vocab))
-    print("label.vocab", len(LABEL.vocab))
+    # print("text.vocab", len(TEXT.vocab))
+    # print("label.vocab", len(LABEL.vocab))
 
     device = t.device("cuda" if USE_CUDA else "cpu")
 
@@ -155,8 +161,8 @@ if __name__ == '__main__':
         device=device
     )
 
-    batch = next(iter(train_iterator))
-    print(batch.text)
+    # batch = next(iter(train_iterator))
+    # print(batch.text)
 
     # PAD_IDX = TEXT.vocab.stoi(TEXT.pad_token)
     # UNK_IDX = TEXT.vocab.stoi(TEXT.unk_token)
