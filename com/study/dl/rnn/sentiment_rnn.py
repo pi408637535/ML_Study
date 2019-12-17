@@ -14,7 +14,7 @@ from torchtext import datasets
 from sklearn.metrics import accuracy_score
 import time
 
-MAX_VOCAB_SIZE = 25004
+MAX_VOCAB_SIZE = 25016
 BATCH_SIZE = 64
 SEED = 1
 HIDDEN_SIZE = 256
@@ -46,6 +46,7 @@ class MyModel(nn.Module):
         # hidden:(h_0, c_0)
         # h_0: batch, layers*diection,hidden_size
         # c_0: batch, layers*diection,hidden_size
+        print(embedding.shape)
         output, hidden = self.lstm(embedding)
 
         #out:batch,output_size
@@ -80,13 +81,14 @@ def train(model, iterator, optimizer, crit):
         data.t_()
         output, hidden = model(data, hidden)
         loss = crit(t.squeeze(output), target)
-        acc = binary_accuracy(output, target)
+        #acc = binary_accuracy(output, target)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         epoch_loss += loss.item()
-        epoch_acc += acc
+        print(loss.item())
+        #epoch_acc += acc
 
     return epoch_loss / len(iterator)
 
@@ -102,13 +104,15 @@ def eval(model, iterator, optimizer, crit):
             data, target = data.cuda(), target.cuda()
         data.t_()
         output, hidden = model(data, hidden)
-        loss = crit(output, target)
+        loss = crit(t.squeeze(output), target)
+        # acc = binary_accuracy(output, target)
 
-        acc = binary_accuracy(output, t.unsqueeze(target, -1))
-        epoch_loss += loss.item() * len(batch)
-        epoch_acc += acc * len(batch)
-
+        optimizer.zero_grad()
+        loss.backward()
         optimizer.step()
+        epoch_loss += loss.item()
+        print(loss.item())
+        # epoch_acc += acc
 
     model.train()
     return epoch_loss / len(iterator), epoch_acc / len(iterator)
