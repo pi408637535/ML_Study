@@ -46,11 +46,11 @@ class MyModel(nn.Module):
         # hidden:(h_0, c_0)
         # h_0: batch, layers*diection,hidden_size
         # c_0: batch, layers*diection,hidden_size
-        output, hidden = self.lstm(embedding, hidden)
+        output, hidden = self.lstm(embedding)
 
-        output = output.contiguous().view(output.shape[0] * output.shape[1], output.shape[2])
-        out = self.fc(output)
-        return out.view(output.shape[0], output.shape[1], output.shape[1]), hidden
+        #out:batch,output_size
+        out = self.fc(t.squeeze(hidden[0]))
+        return out, hidden
 
     def init_hidden(self, batch, requires_grad=True):
         weight = next(self.parameters())
@@ -62,9 +62,11 @@ class MyModel(nn.Module):
 
 
 def binary_accuracy(preds, y):
-    rounted_preds = t.round(t.sigmoid(preds))
-    return accuracy_score(rounted_preds.cpu().numpy(), y.numpy())
-
+    # round predictions to the closest integer
+    rounded_preds = t.round(t.sigmoid(preds))
+    correct = (rounded_preds == y).float()  # convert into float for division
+    acc = correct.sum() / len(correct)
+    return acc
 
 def train(model, iterator, optimizer, crit):
     epoch_loss, epoch_acc = 0., 0.
@@ -77,7 +79,7 @@ def train(model, iterator, optimizer, crit):
             data, target = data.cuda(), target.cuda()
         data.t_()
         output, hidden = model(data, hidden)
-        loss = crit(output, target)
+        loss = crit(t.squeeze(output), target)
         acc = binary_accuracy(output, target)
 
         optimizer.zero_grad()
@@ -102,7 +104,7 @@ def eval(model, iterator, optimizer, crit):
         output, hidden = model(data, hidden)
         loss = crit(output, target)
 
-        acc = binary_accuracy(output, target)
+        acc = binary_accuracy(output, t.unsqueeze(target, -1))
         epoch_loss += loss.item() * len(batch)
         epoch_acc += acc * len(batch)
 
@@ -126,7 +128,8 @@ if __name__ == '__main__':
     TEXT = data.Field(tokenize='spacy')
     LABEL = data.LabelField(dtype=t.float)
 
-    train_data, test_data = datasets.IMDB.splits(TEXT, LABEL)
+    imdb_dir = '/home/demo1/womin/piguanghua/.data/imdb/aclImdb'
+    train_data, test_data = datasets.IMDB.splits(TEXT, LABEL, path=imdb_dir)
     print("train len", len(train_data))
     print("test len", len(test_data))
 
