@@ -50,6 +50,87 @@ class MyRNN(nn.Module):
         out = self.out(t.squeeze(output))
         return out,h_state
 
+class MyL2LSTM(nn.Module):
+    def __init__(self, input_size, layer, hidden_size, output_size):
+        super(MyL2LSTM, self).__init__()
+        self.rnn = nn.LSTM(
+            input_size,
+            hidden_size,
+            batch_first = True,
+            num_layers = layer
+            #bidirectional=True
+        )
+        self.out = nn.Linear(hidden_size , output_size)
+        self.rnn_type = "LSTM"
+        self._hidden_size = hidden_size
+        self._layer = layer
+    '''
+    :param x:  batch,seq_len,input_size: 1,10,1
+    :param h_state: batch, h_size
+    :return:
+        因为本函数做作的是的，输入con_y来模拟sin_y，所以每个input的prediction都要
+    作为损失的依据。
+    '''
+    def forward(self, x, h_state):
+        #output: batch, seq_len,direction * h_size: 1,10,32
+        #h_state[0]:batch,layer*direction, h_size : 1,1,32
+
+        #output,h_state = self.rnn(x, h_state)
+        output, h_state = self.rnn(x, h_state)
+
+        out = self.out(t.squeeze(output))
+        return out,h_state
+
+    def init_hidden(self, batch, requires_grad=True):
+        weight = next(self.parameters()).data
+        if self.rnn_type == 'LSTM':
+            hidden = (weight.new(self._layer, batch, self._hidden_size).zero_().to(device),
+                      weight.new(self._layer, batch, self._hidden_size).zero_().to(device))
+            return hidden
+        else:
+            return t.zeros((batch, self._layer, self._hidden_size), requires_grad=requires_grad)
+
+class MyLBiLSTM(nn.Module):
+    def __init__(self, input_size, layer, hidden_size, output_size):
+        super(MyLBiLSTM, self).__init__()
+        self.rnn = nn.LSTM(
+            input_size,
+            hidden_size,
+            batch_first = True,
+            num_layers = layer,
+            bidirectional=True
+        )
+        self.out = nn.Linear(hidden_size * 2, output_size)
+        self.rnn_type = "LSTM"
+        self._hidden_size = hidden_size
+        self._layer = layer
+    '''
+    :param x:  batch,seq_len,input_size: 1,10,1
+    :param h_state: batch, h_size
+    :return:
+        因为本函数做作的是的，输入con_y来模拟sin_y，所以每个input的prediction都要
+    作为损失的依据。
+    '''
+    def forward(self, x, h_state):
+        #output: batch, seq_len,direction * h_size: 1,10,32
+        #h_state[0]:batch,layer*direction, h_size : 1,1,32
+
+        #output,h_state = self.rnn(x, h_state)
+        output, h_state = self.rnn(x, h_state)
+
+        out = self.out(t.squeeze(output))
+        return out,h_state
+
+    def init_hidden(self, batch, requires_grad=True):
+        weight = next(self.parameters()).data
+        if self.rnn_type == 'LSTM':
+            hidden = (weight.new(self._layer * 2, batch, self._hidden_size).zero_().to(device),
+                      weight.new(self._layer * 2, batch, self._hidden_size).zero_().to(device))
+            return hidden
+        else:
+            return t.zeros((batch, self._layer, self._hidden_size), requires_grad=requires_grad)
+
+
 
 def repackage_hidden(h):
     if isinstance(h, t.Tensor):
