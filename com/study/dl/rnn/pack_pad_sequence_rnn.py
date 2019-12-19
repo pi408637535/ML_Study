@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 
+USE_CUDA = t.cuda.is_available()
+device = t.device("cuda" if USE_CUDA else "cpu")
 
 class LstmMode(nn.Module):
     def __init__(self, vocab_size, hidden_size):
@@ -41,12 +43,16 @@ class LstmMode(nn.Module):
         padded_res, _ = nn.utils.rnn.pad_packed_sequence(packed_out, batch_first=True)
 
         _, desorted_indices = t.sort(indices, descending=False)
-        desorted_res = padded_res[desorted_indices]
+        out = padded_res[desorted_indices] #gain original order
+
+        out = out[desorted_indices.long()].contiguous()
+        #hid[0] = hid[0][:,desorted_indices.long()].contiguous()
+        #hid[1] = hid[1][:, desorted_indices.long()].contiguous()
 
         #out = out[original_idx.long()].contiguous()
         #hid = hid[:, original_idx.long()].contiguous()
 
-        return desorted_res, hid[[-1]]
+        return out, (hid[0][:,desorted_indices.long()].contiguous(), hid[1][:, desorted_indices.long()].contiguous())
 
     def init_hidden(self,  batch, requires_grad=True):
         weight = next(self.parameters()).data
@@ -72,4 +78,8 @@ if __name__ == '__main__':
 
 
     encoder_out, hid = model(text, seq_lengths)
-    encoder_out
+    print(encoder_out, hid)
+
+    model = nn.LSTM(input_dim, hidden_size)
+    encoder_out, hid = model(text)
+    print(encoder_out, hid)
