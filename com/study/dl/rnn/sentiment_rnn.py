@@ -14,7 +14,7 @@ from torchtext import datasets
 from sklearn.metrics import accuracy_score
 import time
 
-MAX_VOCAB_SIZE = 25002
+MAX_VOCAB_SIZE = 25004
 BATCH_SIZE = 64
 SEED = 1
 HIDDEN_SIZE = 256
@@ -23,13 +23,16 @@ LAYER = 1
 EMBED_SIZE = 100
 
 USE_CUDA = t.cuda.is_available()
-
+if USE_CUDA:
+    device = t.device("cuda")
+else:
+    device = t.device("cpu")
 
 class MyModel(nn.Module):
     def __init__(self, vocab_size, embed_size, hidden_size, layer, output_size):
         super(MyModel, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embed_size)
-        self.lstm = nn.LSTM(embed_size, hidden_size, layer, batch_first=True)
+        self.lstm = nn.LSTM(embed_size, hidden_size, layer, batch_first=True, bidirectional=True)
         self.fc = nn.Linear(hidden_size, output_size)
 
         self.rnn_type = "LSTM"
@@ -39,19 +42,18 @@ class MyModel(nn.Module):
     # text: batch,seq_len
     # hidden: batch,hidden_size
     def forward(self, text, hidden):
-        # embedding: batct, seq_len, embed_size,
+        # embedding: batch, seq_len, embed_size,
         embedding = self.embedding(text)
 
-        # output: batch,seq_len, direction*hidden_size
+        # output: batch, seq_len, direction*hidden_size
         # hidden:(h_0, c_0)
-        # h_0: batch, layers*diection,hidden_size
-        # c_0: batch, layers*diection,hidden_size
-        print(hidden[0].shape)
-        output, hidden = self.lstm(embedding)
-        # print("aaaa",hidden[0].shape)
+        # h_0: layers*diection, batch, ,hidden_size
+        # c_0: layers*diection, batch, ,hidden_size
 
+        output, hidden = self.lstm(embedding)
+
+        #out:batch,output_size
         out = self.fc(t.squeeze(hidden[0]))
-        # print("out",out.shape)
         return out, hidden
 
     def init_hidden(self, batch, requires_grad=True):
@@ -63,11 +65,63 @@ class MyModel(nn.Module):
             return weight.new_zeros((batch, self._layer, self._hidden_size), requires_grad=requires_grad)
 
 
+class SentimentNet(nn.Module):
+    def __init__(self, batch, vocab_size, embed_size, hidden_size, layer, output_size, drop_prob=0.5):
+        super(SentimentNet, self).__init__()
+        self._hidden_size = hidden_size
+        self._layer = layer
+        self._batch = batch
+        self._output_size = output_size
+
+
+        self._embedding = nn.Embedding(vocab_size, embed_size)
+        self._lstm = nn.LSTM(
+            vocab_size,
+            hidden_size,
+            layer,
+            batch_first=True
+        )
+        self._fc = nn.Linear(hidden_size, output_size)
+        self._sigmod = F.sigmoid()
+
+    #text: batch,seq_len
+    #h_state: layer * direction, batch, hidden_size
+    def forward(self, text, h_state):
+
+        #embed: batch,seq_len,embed_size
+        embed = self._embedding(text)
+        #output: batch,seq_len,direction_h_state
+        #h_state: layer*direction, batch, hidden_size
+        output,h_state = self._lstm(embed, h_state)
+
+        output = output.continuous().view(-1, self._hidden_size)
+        #output: batch * seq_len, output
+        output = self._fc(output)
+
+        #output: batch * seq_len, output
+        output = self._sigmod(output)
+
+        #seq_len: it's dynamic in running.
+        #output: batch, seq_len * output_size
+        output = output.view(self._batch, -1)
+
+        output = output[:, -1]
+
+        return output, h_state
+
+    def init_hidden(self, batch, requires_grad=True):
+        weight = next(self.parameters()).data
+        if self.rnn_type == 'LSTM':
+            hidden = (weight.new(self._layer, batch, self._hidden_size).zero_().to(device),
+                      weight.new(self._layer, batch, self._hidden_size).zero_().to(device))
+            return hidden
+        else:
+            return t.zeros((batch, self._layer, self._hidden_size), requires_grad=requires_grad)
+
+
 def binary_accuracy(preds, y):
-    rounded_preds = t.round(t.sigmoid(preds))
-    correct = (rounded_preds == y).float()  # convert into float for division
-    acc = correct.sum() / len(correct)
-    return acc
+    rounted_preds = t.round(t.sigmoid(preds))
+    return accuracy_score(rounted_preds.cpu().numpy(), y.numpy())
 
 
 def train(model, iterator, optimizer, crit):
@@ -80,17 +134,18 @@ def train(model, iterator, optimizer, crit):
         if USE_CUDA:
             data, target = data.cuda(), target.cuda()
         data.t_()
+        print("data=",data.shape)
         output, hidden = model(data, hidden)
-
-        print("train", target.shape, output.shape)
-        loss = crit(t.unsqueeze(target, -1), output)
-        acc = binary_accuracy(output, t.unsqueeze(target, -1))
+        print("output=",output.shape,"target=",target.shape )
+        loss = crit(t.squeeze(output), target)
+        #acc = binary_accuracy(output, target)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         epoch_loss += loss.item()
-        epoch_acc += acc
+        print(loss.item())
+        #epoch_acc += acc
 
     return epoch_loss / len(iterator)
 
@@ -106,13 +161,13 @@ def eval(model, iterator, optimizer, crit):
             data, target = data.cuda(), target.cuda()
         data.t_()
         output, hidden = model(data, hidden)
+        loss = crit(output, target)
 
-        # print("train",target.shape, output.shape)
-        loss = crit(t.unsqueeze(target, -1), output)
-        acc = binary_accuracy(output, t.unsqueeze(target, -1))
+        acc = binary_accuracy(output, target)
+        epoch_loss += loss.item() * len(batch)
+        epoch_acc += acc * len(batch)
 
-        epoch_loss += loss.item()
-        epoch_acc += acc
+        optimizer.step()
 
     model.train()
     return epoch_loss / len(iterator), epoch_acc / len(iterator)
@@ -132,7 +187,8 @@ if __name__ == '__main__':
     TEXT = data.Field(tokenize='spacy')
     LABEL = data.LabelField(dtype=t.float)
 
-    train_data, test_data = datasets.IMDB.splits(TEXT, LABEL)
+    imdb_dir = '/home/demo1/womin/piguanghua/.data/imdb/aclImdb'
+    train_data, test_data = datasets.IMDB.splits(TEXT, LABEL, path=imdb_dir)
     print("train len", len(train_data))
     print("test len", len(test_data))
 
@@ -147,10 +203,10 @@ if __name__ == '__main__':
 
     LABEL.build_vocab(train_data)
 
-    # print("text.vocab", len(TEXT.vocab))
-    # print("label.vocab", len(LABEL.vocab))
+    print("text.vocab", len(TEXT.vocab))
+    print("label.vocab", len(LABEL.vocab))
 
-    device = t.device("cuda" if USE_CUDA else "cpu")
+    #device = t.device("cuda" if USE_CUDA else "cpu")
 
     # BucketIterator将长度差不多的句子放到同一个batch中,使每个batch中不会出现太多的padding
     # 好一点的处理，把pad产生的输出要消除
@@ -161,8 +217,8 @@ if __name__ == '__main__':
         device=device
     )
 
-    # batch = next(iter(train_iterator))
-    # print(batch.text)
+    batch = next(iter(train_iterator))
+    print(batch.text)
 
     # PAD_IDX = TEXT.vocab.stoi(TEXT.pad_token)
     # UNK_IDX = TEXT.vocab.stoi(TEXT.unk_token)
@@ -172,11 +228,15 @@ if __name__ == '__main__':
     # model.embed.weight.data[UNK_IDX] = t.zeros(EMBEDDING_SIZE)
 
     lr = 1e-4
-    model = MyModel(MAX_VOCAB_SIZE, EMBED_SIZE, HIDDEN_SIZE, LAYER, OUTPUT_SIZE)
+    #batch, vocab_size, embed_size, hidden_size, layer, output_size
+    model = SentimentNet(BATCH_SIZE, MAX_VOCAB_SIZE, EMBED_SIZE, HIDDEN_SIZE, LAYER, OUTPUT_SIZE)
+    #model = SentimentNet(MAX_VOCAB_SIZE, EMBED_SIZE, HIDDEN_SIZE, LAYER, OUTPUT_SIZE)
     optimizer = optim.Adam(model.parameters(), lr)
-    crit = nn.BCEWithLogitsLoss()
+    #crit = nn.BCEWithLogitsLoss()
+    crit = nn.BCELoss()
     model = model.to(device)
     crit = crit.to(device)
+
 
     N_EPOCHS = 10
     best_valid_loss = float('inf')
