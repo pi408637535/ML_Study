@@ -14,7 +14,7 @@ from torchtext import datasets
 from sklearn.metrics import accuracy_score
 import time
 
-MAX_VOCAB_SIZE = 25016
+MAX_VOCAB_SIZE = 25004
 BATCH_SIZE = 64
 SEED = 1
 HIDDEN_SIZE = 256
@@ -120,11 +120,9 @@ class SentimentNet(nn.Module):
 
 
 def binary_accuracy(preds, y):
-    # round predictions to the closest integer
-    rounded_preds = t.round(t.sigmoid(preds))
-    correct = (rounded_preds == y).float()  # convert into float for division
-    acc = correct.sum() / len(correct)
-    return acc
+    rounted_preds = t.round(t.sigmoid(preds))
+    return accuracy_score(rounted_preds.cpu().numpy(), y.numpy())
+
 
 def train(model, iterator, optimizer, crit):
     epoch_loss, epoch_acc = 0., 0.
@@ -163,15 +161,13 @@ def eval(model, iterator, optimizer, crit):
             data, target = data.cuda(), target.cuda()
         data.t_()
         output, hidden = model(data, hidden)
-        loss = crit(t.squeeze(output), target)
-        # acc = binary_accuracy(output, target)
+        loss = crit(output, target)
 
-        optimizer.zero_grad()
-        loss.backward()
+        acc = binary_accuracy(output, target)
+        epoch_loss += loss.item() * len(batch)
+        epoch_acc += acc * len(batch)
+
         optimizer.step()
-        epoch_loss += loss.item()
-        print(loss.item())
-        # epoch_acc += acc
 
     model.train()
     return epoch_loss / len(iterator), epoch_acc / len(iterator)
