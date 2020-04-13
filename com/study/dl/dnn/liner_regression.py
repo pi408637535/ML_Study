@@ -1,89 +1,111 @@
+# -*- coding: utf-8 -*-
+# @Time    : 2020/4/7 09:13
+# @Author  : piguanghua
+# @FileName: liner_regression.py
+# @Software: PyCharm
+
+from matplotlib import pyplot as plt
+import numpy as np
+import random
 import torch as t
+import torch.nn as nn
 import numpy as np
-from torch import nn
-import matplotlib.pyplot as plt
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import math
+import sklearn.datasets
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
+'''
+1.Pytroch Liner仅能接受Float
+2.Liner Input n,*,input Ouput:N,*,output
+'''
 
+class MyDataset(Dataset):
 
+    def __init__(self, vocab=None, opt=None):
+        self.data = self._load_dataset()
 
-class LinerRegression(t.nn.Module):
-    def __init__(self):
-        super(LinerRegression, self).__init__()
-        self.linear = nn.Linear(15, 1)
+    def _load_dataset(self):
 
-    def forward(self, x):
-        out = self.linear(x)
+        all_data = []
+        num_inputs = 2
+        num_examples = 1000
+        true_w = [2, -3.4]
+        true_b = 4.2
+        features = np.random.normal(size=(num_examples, num_inputs))
+        labels = true_w[0] * features[:, 0] + true_w[1] * features[:, 1] + true_b
+        labels += np.random.normal(scale=0.01, size=labels.shape)
+
+        for i in range(num_examples):
+            data = { "data": np.reshape(features[i,:],(-1,1)).astype(np.float),  "label":labels[i]}
+            all_data.append(data)
+        return all_data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        return self.data[index]
+
+class LinerModel(nn.Module):
+
+    def __init__(self, input, output):
+        super(LinerModel, self).__init__()
+        self.sequential = nn.Sequential(
+            nn.Linear(input, output),
+        )
+
+    def forward(self, data):
+        data = t.FloatTensor(data.numpy())
+        data = t.squeeze(data)
+        out = self.sequential(data)
         return out
 
 if __name__ == '__main__':
+    '''
+    num_inputs = 2
+    num_examples = 1000
+    true_w = [2, -3.4]
+    true_b = 4.2
+    features = np.random.normal(size=(num_examples, num_inputs))
+    labels = true_w[0] * features[:, 0] + true_w[1] * features[:, 1] + true_b
+    labels += np.random.normal(scale=0.01, size=labels.shape)
 
-    path_train = "/Users/piguanghua/Downloads/house-prices-advanced-regression-techniques/train.csv"
-    columns = ['MSSubClass', 'LotFrontage', 'LotArea', "OverallQual", "OverallCond", "YearBuilt",
-               "YearRemodAdd", "MasVnrArea", "BsmtFinSF1", "TotalBsmtSF", "GrLivArea", "TotRmsAbvGrd",
-               "GarageYrBlt", "GarageArea", "YrSold", "SalePrice"]
+    plt.scatter(features[:, 0], labels)
+    plt.scatter(features[:, 1], labels)
 
-    data = pd.read_csv(path_train, usecols=columns)
-    data["LotFrontage"] = data["LotFrontage"].fillna(np.mean(data["LotFrontage"]))
-    data["GarageYrBlt"] = data["GarageYrBlt"].fillna(np.mean(data["GarageYrBlt"]))
-    data = data.dropna()
-
-    X = data.iloc[:, :-1].values
-    y = data['SalePrice'].values  # 房间价格
-    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
-    bins = int(1 + 4 * math.log(len(y)))
-    plt.hist(y, bins=bins, density=0, facecolor="blue", edgecolor="black", alpha=0.7)
-    # 显示横轴标签
-    plt.xlabel("interval")
-    # 显示纵轴标签
-    plt.ylabel("SalePrice")
-    # 显示图标题
-    # plt.title("")
     plt.show()
-
     '''
-    x_train = np.array([[3.3], [4.4], [5.5], [6.71], [6.93], [4.168],
-                        [9.779], [6.182], [7.59], [2.167], [7.042],
-                        [10.791], [5.313], [7.997], [3.1]], dtype=np.float32)
 
-    y_train = np.array([[1.7], [2.76], [2.09], [3.19], [1.694], [1.573],
-                        [3.366], [2.596], [2.53], [1.221], [2.827],
-                        [3.465], [1.65], [2.904], [1.3]], dtype=np.float32)
-    '''
-    scaler_x = StandardScaler()
-    scaler_y = StandardScaler()
-
-    X = scaler_x.fit_transform(X)
-    y = scaler_y.fit_transform(y.reshape((-1, 1)))
-
-    x_train = X
-    y_train = y
-
-
-    model = LinerRegression()
+    input = 2
+    output = 1
+    model = LinerModel(input, output)
     criterion = nn.MSELoss()
-    optimizer = t.optim.SGD(model.parameters(), lr = 1e-4)
+    lr = 1e-4
+    optimizer = t.optim.SGD(model.parameters(),lr = lr)
+    epochs = 5
 
-    x_train = t.FloatTensor(x_train)
-    y_train = t.FloatTensor(y_train)
+    use_gpu = True if t.cuda.is_available() else False
+    device = t.device('cuda' if use_gpu else 'cpu')
+    batch_size = 50
+    dataloader = DataLoader(dataset=MyDataset(), batch_size=batch_size)
 
-    num_epochs = 1000
-    for epoch in range(num_epochs):
-        out = model(x_train)
-        loss = criterion(y_train, out)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    for epoch in range(epochs):
+        for batch_id, batch_data in enumerate(dataloader, 0):
+            model.train()
+            targets = batch_data['label'].to(device)
+            inputs = batch_data['data'].to(device)
 
-        if (epoch + 1) % 20 == 0:
-            print(f'Epoch[{epoch + 1}/{num_epochs}], loss: {loss.item():.6f}')
+            output = model(inputs)
+            output = t.squeeze(output)
+            loss = criterion(output, targets)
+            loss.backward()
+            optimizer.step()
+            print(loss.item())
 
+    for name,parameters in model.named_parameters():
+        print(name,':',parameters)
 
 
 

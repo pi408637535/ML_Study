@@ -11,4 +11,5 @@ buildNumber.properties
 .idea/
 *.iml
 /bin/
-.data/
+*.iml
+*.xml
