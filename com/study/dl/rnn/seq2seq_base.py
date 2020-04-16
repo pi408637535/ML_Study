@@ -12,11 +12,12 @@ import pandas as pd
 from PIL import Image
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
 class PlainEncoder(nn.Module):
     def __init__(self, vocab_size, embed_size,hidden_size):
-        super(PlainEocoder, self).__init__()
+        super(PlainEncoder, self).__init__()
 
         self.embedding = nn.Embedding(vocab_size, embed_size)
 
