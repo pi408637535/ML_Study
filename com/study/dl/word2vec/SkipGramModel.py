@@ -23,6 +23,8 @@ import codecs
 from collections import Counter
 from collections import OrderedDict
 import copy
+import pandas as pd
+import logging
 
 #hypotrical parameter
 USE_CUDA = t.cuda.is_available()
@@ -44,6 +46,30 @@ BATCH_SIZE = 128  # the batch size
 LEARNING_RATE = 0.2  # the initial learning rate
 EMBEDDING_SIZE = 300
 
+
+def get_logger():
+    logger = logging.getLogger("classify")
+    logger.setLevel(logging.INFO)
+
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    )
+    log_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M')
+    log_path = '{}/{}_{}_{}.txt'.format(args.log_dir, args.name, args.model_name, log_time)
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(message)s')
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    return logger
+logger = get_logger()
+
 text = None  #文本
 def preproccess():
     def word_tokenize(text):
@@ -61,9 +87,6 @@ def preproccess():
     # ?有问题
     totoal_words_times = np.sum(list(words.values()))
     print(words["the"])
-
-    print(totoal_words_times)
-    totoal_words_times = 1e7
 
     # frequents = [word  for word in words]
     frequents = {k: (v / totoal_words_times) for k, v in words.items()}
@@ -102,7 +125,7 @@ class MyDataset(Dataset):
         negative_word = t.multinomial(t.from_numpy(np.array(list(self.frequents.values()))),
                                       K * 2 * C)
 
-        return t.Tensor(center_label), t.Tensor(pos_labels), negative_word
+        return t.Tensor([center_label]), t.Tensor(pos_labels), negative_word
 
 class Skip_Gram(nn.Module):
     def __init__(self, vocab_size,embed_size):
@@ -131,17 +154,19 @@ class Skip_Gram(nn.Module):
         pos_embedding = self.out_embed(pos_labels)  # B * (2*C) * embed_size
         neg_embedding = self.out_embed(neg_labels)  # B * (2*C * K) * embed_size
 
-        log_pos = t.bmm(pos_embedding, input_embedding.unsqueeze(2)).squeeze()  # B * (2*C)
-        log_neg = t.bmm(neg_embedding, -input_embedding.unsqueeze(2)).squeeze()  # B * (2*C*K)
+        log_pos = t.bmm(pos_embedding, input_embedding.unsqueeze(2)).squeeze(2)  # B * (2*C)
+        log_neg = t.bmm(neg_embedding, input_embedding.unsqueeze(2)).squeeze(2)  # B * (2*C*K)
 
         log_pos = F.logsigmoid(log_pos).sum(1)
-        log_neg = F.logsigmoid(log_neg).sum(1)  # batch_size
+        log_neg = t.log(1 - F.sigmoid(log_neg)).sum(1)  # batch_size
 
         loss = log_pos + log_neg
-        return loss
+        return -loss
 
+    def get_embedding(self):
+        return self.in_embed.weight.cpu().detach().numpy()
 
-def train(model, dataloader, optimizer):
+def train(model, dataloader, optimizer, wode2idx):
     for e in range(NUM_EPOCHS):
         for i, (input_labels, pos_labels, neg_labels) in enumerate(dataloader):
 
@@ -155,25 +180,47 @@ def train(model, dataloader, optimizer):
                 neg_labels = neg_labels.cuda()
 
             optimizer.zero_grad()
+            input_labels = t.squeeze(input_labels, 1)
             loss = model(input_labels, pos_labels, neg_labels).mean()
             loss.backward()
             optimizer.step()
 
             if i % 100 == 0:
                     print("epoch: {}, iter: {}, loss: {}".format(e, i, loss.item()))
+                    evaluate(model.get_embedding(), wode2idx)
 
 
+        #embedding_weights = model.input_embeddings()
+        #np.save("embedding-{}".format(EMBEDDING_SIZE), embedding_weights)
+        t.save(model.state_dict(), "embedding-{}.pth".format(EMBEDDING_SIZE))
 
-        embedding_weights = model.input_embeddings()
-        np.save("embedding-{}".format(EMBEDDING_SIZE), embedding_weights)
-        #torch.save(model.state_dict(), "embedding-{}.th".format(EMBEDDING_SIZE))
+def evaluate(embedding, wode2idx):
+    import pandas as pd
+    path = "/home/demo1/womin/piguanghua/data/pre_data/wordsim353.csv"
+    df = pd.read_csv(path)
+    wordpairs = zip(df["Word 1"], df["Word 2"])
+    human_similarities = []
+    machine_similarities = []
+    for index, pair in enumerate(wordpairs):
+       pair_left = word2idx.get(pair[0], word2idx["<unk>"])
+       pair_right = word2idx.get(pair[1], word2idx["<unk>"])
+       pair_left = embedding[pair_left,:]
+       pair_right = embedding[pair_right,:]
+       machine_similarity = cosine_similarity(pair_left[np.newaxis,:], pair_right[np.newaxis,:])
+       human_similarities.append(df["Human (mean)"][index])
+       machine_similarities.append(machine_similarity[0, :][0])
+
+    import  math
+    print(math.fabs(np.sum(machine_similarities) - np.sum(human_similarities)))
+
 
 if __name__ == '__main__':
     word2idx, idx2word, frequents, tokens = preproccess()
     model = Skip_Gram(MAX_VOCAB_SIZE, EMBEDDING_SIZE)
-    batch_size = 1
+    model.to(t.device("cuda" if USE_CUDA else 'cpu'))
+    batch_size = 32
     lr = 1e-4
-    optimizer = t.optim.SGD(model.parameters(), lr=lr)
+    optimizer = t.optim.Adam(model.parameters(), lr=lr)
 
     dataloader = DataLoader(dataset=MyDataset(word2idx, idx2word, frequents, tokens), batch_size=batch_size)
-    train(model, dataloader, optimizer)
+    train(model, dataloader, optimizer, word2idx)
