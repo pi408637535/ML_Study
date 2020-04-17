@@ -24,6 +24,7 @@ from collections import Counter
 from collections import OrderedDict
 import copy
 import pandas as pd
+import datetime
 import logging
 
 #hypotrical parameter
@@ -38,15 +39,16 @@ if USE_CUDA:
 
 # 设定一些超参数
 
-K = 100  # number of negative samples
+K = 10  # number of negative samples
 C = 3  # nearby words threshold
 NUM_EPOCHS = 2  # The number of epochs of training
 MAX_VOCAB_SIZE = 40000  # the vocabulary size
-BATCH_SIZE = 128  # the batch size
+BATCH_SIZE = 64  # the batch size
 LEARNING_RATE = 0.2  # the initial learning rate
 EMBEDDING_SIZE = 300
 
 
+'''
 def get_logger():
     logger = logging.getLogger("classify")
     logger.setLevel(logging.INFO)
@@ -69,6 +71,8 @@ def get_logger():
 
     return logger
 logger = get_logger()
+'''
+
 
 text = None  #文本
 def preproccess():
@@ -123,7 +127,7 @@ class MyDataset(Dataset):
         pos_labels = [ self.word2idx.get(self.tokens[pos_index], word2idx["<unk>"]) for pos_index in pos_indexs]
 
         negative_word = t.multinomial(t.from_numpy(np.array(list(self.frequents.values()))),
-                                      K * 2 * C)
+                                      K)
 
         return t.Tensor([center_label]), t.Tensor(pos_labels), negative_word
 
@@ -158,8 +162,7 @@ class Skip_Gram(nn.Module):
         log_neg = t.bmm(neg_embedding, input_embedding.unsqueeze(2)).squeeze(2)  # B * (2*C*K)
 
         log_pos = F.logsigmoid(log_pos).sum(1)
-        log_neg = t.log(1 - F.sigmoid(log_neg)).sum(1)  # batch_size
-
+        log_neg = F.logsigmoid(-log_neg).sum(1)
         loss = log_pos + log_neg
         return -loss
 
