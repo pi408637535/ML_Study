@@ -39,13 +39,13 @@ if USE_CUDA:
 
 # 设定一些超参数
 
-K = 10  # number of negative samples
+K = 100  # number of negative samples
 C = 3  # nearby words threshold
 NUM_EPOCHS = 2  # The number of epochs of training
-MAX_VOCAB_SIZE = 40000  # the vocabulary size
+MAX_VOCAB_SIZE = 30000  # the vocabulary size
 BATCH_SIZE = 64  # the batch size
-LEARNING_RATE = 0.2  # the initial learning rate
-EMBEDDING_SIZE = 300
+LEARNING_RATE = 1e-4  # the initial learning rate
+EMBEDDING_SIZE = 100
 
 
 '''
@@ -89,17 +89,17 @@ def preproccess():
 
     # 决定负采样的频率
     # ?有问题
-    totoal_words_times = np.sum(list(words.values()))
+    total_words_times = np.sum(list(words.values()))
     print(words["the"])
 
     # frequents = [word  for word in words]
-    frequents = {k: (v / totoal_words_times) for k, v in words.items()}
+    frequents = {k: (v / total_words_times) for k, v in words.items()}
     print(frequents["the"])
 
     frequents = {k: (v ** (3. / 4.)) for k, v in frequents.items()}
-    totoal_words_times = np.sum(list(frequents.values()))
+    total_words_times = np.sum(list(frequents.values()))
     # 据说有优化 ?有问题
-    frequents = {k: (v / totoal_words_times) for k, v in frequents.items()}
+    frequents = {k: (v / total_words_times) for k, v in frequents.items()}
     words = sorted(words, key=words.get, reverse=True)
     word2idx = {o: i for i, o in enumerate(words)}
     idx2word = {i: o for i, o in enumerate(words)}
@@ -127,7 +127,7 @@ class MyDataset(Dataset):
         pos_labels = [ self.word2idx.get(self.tokens[pos_index], word2idx["<unk>"]) for pos_index in pos_indexs]
 
         negative_word = t.multinomial(t.from_numpy(np.array(list(self.frequents.values()))),
-                                      K)
+                                      K, True)
 
         return t.Tensor([center_label]), t.Tensor(pos_labels), negative_word
 
@@ -146,20 +146,15 @@ class Skip_Gram(nn.Module):
 
 
     def forward(self, input_labels, pos_labels, neg_labels):
-        '''
-        :param input_labels: input_labels: 中心词, [batch_size]
-        :param pos_labels: pos_labels: 中心词周围 context window 出现过的单词 [batch_size * (window_size * 2)]
-        :param neg_labels: neg_labelss: 中心词周围没有出现过的单词，从 negative sampling 得到 [batch_size, (window_size * 2 * K)]
-        :return:
-        '''
+
         batch_size = input_labels.size(0)
         input_embedding = self.in_embed(input_labels)  # B * embed_size
 
-        pos_embedding = self.out_embed(pos_labels)  # B * (2*C) * embed_size
-        neg_embedding = self.out_embed(neg_labels)  # B * (2*C * K) * embed_size
+        pos_embedding = self.out_embed(pos_labels)
+        neg_embedding = self.out_embed(neg_labels)
 
-        log_pos = t.bmm(pos_embedding, input_embedding.unsqueeze(2)).squeeze(2)  # B * (2*C)
-        log_neg = t.bmm(neg_embedding, input_embedding.unsqueeze(2)).squeeze(2)  # B * (2*C*K)
+        log_pos = t.bmm(pos_embedding, input_embedding.unsqueeze(2)).squeeze(2)
+        log_neg = t.bmm(neg_embedding, input_embedding.unsqueeze(2)).squeeze(2)
 
         log_pos = F.logsigmoid(log_pos).sum(1)
         log_neg = F.logsigmoid(-log_neg).sum(1)
@@ -190,7 +185,7 @@ def train(model, dataloader, optimizer, wode2idx):
 
             if i % 100 == 0:
                     print("epoch: {}, iter: {}, loss: {}".format(e, i, loss.item()))
-                    evaluate(model.get_embedding(), wode2idx)
+                    #evaluate(model.get_embedding(), wode2idx)
 
 
         #embedding_weights = model.input_embeddings()
@@ -221,9 +216,7 @@ if __name__ == '__main__':
     word2idx, idx2word, frequents, tokens = preproccess()
     model = Skip_Gram(MAX_VOCAB_SIZE, EMBEDDING_SIZE)
     model.to(t.device("cuda" if USE_CUDA else 'cpu'))
-    batch_size = 32
-    lr = 1e-4
-    optimizer = t.optim.Adam(model.parameters(), lr=lr)
+    optimizer = t.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    dataloader = DataLoader(dataset=MyDataset(word2idx, idx2word, frequents, tokens), batch_size=batch_size)
+    dataloader = DataLoader(dataset=MyDataset(word2idx, idx2word, frequents, tokens), batch_size=BATCH_SIZE)
     train(model, dataloader, optimizer, word2idx)
