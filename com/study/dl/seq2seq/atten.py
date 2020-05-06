@@ -33,14 +33,18 @@ def attention_forward(model, enc_states, dec_state):
     dec_states = dec_state[:,None,:].repeat(1,seq,1)
 
     enc_and_dec_states = t.cat((enc_states, dec_states), dim=2)
+    enc_and_dec_states = enc_and_dec_states.float()
     e = model(enc_and_dec_states)  # (batch, seq, 1)
     alpha = F.softmax(t.squeeze(e, dim = 2), dim=1)  # 在时间步维度做softmax运算
     alpha = t.unsqueeze(alpha, dim=2)
-    return (alpha * enc_states).sum(dim=1)  # 返回背景变量
+    enc_states = enc_states.float()
+    return (alpha * enc_states).sum(dim=1)  # context
 
 if __name__ == '__main__':
     seq_len, batch_size, num_hiddens = 10, 4, 8
     model = attention_model(2 * num_hiddens, 10)
-    enc_states = t.zeros((batch_size, seq_len, num_hiddens))
-    dec_state = t.zeros((batch_size, num_hiddens))
+    enc_states = t.randint(10, (batch_size, seq_len, num_hiddens))
+
+    dec_state = t.randint(5, (batch_size, num_hiddens))
+    #dec_state = t.zeros((batch_size, num_hiddens))
     print(attention_forward(model, enc_states, dec_state).shape)

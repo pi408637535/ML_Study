@@ -39,7 +39,7 @@ if USE_CUDA:
     t.cuda.manual_seed(53113)
 UNK_IDX = 0
 PAD_IDX = 1
-NUM_EPOCHS = 20
+NUM_EPOCHS = 1
 BATCH_SIZE = 32  # the batch size
 LEARNING_RATE = 1e-3  # the initial learning rate
 EMBEDDING_SIZE = 300
@@ -81,10 +81,9 @@ def pretrain():
         return en, cn
 
     train_file = "/home/demo1/womin/piguanghua/data/cmn.txt"
-    #dev_file = "/home/demo1/womin/piguanghua/data/cmn.txt"
+    dev_file = "/home/demo1/womin/piguanghua/data/cmn_dev.txt"
     train_en, train_cn = load_data(train_file)
-    #dev_en, dev_cn = load_data(dev_file)
-    print(len(train_en))
+    dev_en, dev_cn = load_data(dev_file)
 
     def build_dict(sentences, max_words=21116):
         word_count = Counter()
@@ -112,7 +111,7 @@ def pretrain():
     EN_WORD2ID,EN_ID2WORD,CH_WORD2ID,CH_ID2WORD = en_word2id,en_id2word,cn_word2id,cn_id2word
 
     # 把单词全部转变成数字
-    def encode(en_sentences, cn_sentences, en_dict, cn_dict, sort_by_len=True, maxlen = 20):
+    def encode(en_sentences, cn_sentences, en_dict, cn_dict, sort_by_len=False, maxlen = 20):
         '''
             Encode the sequences.
         '''
@@ -124,18 +123,15 @@ def pretrain():
         out_cn_sentences = [[cn_dict.get(w, 0) for w in sent] for sent in cn_sentences]
 
         # sort sentences by english lengths
-        def len_argsort(seq):
-            return sorted(range(len(seq)), key=lambda x: len(seq[x]))
 
-        # 把中文和英文按照同样的顺序排序
-        if sort_by_len:
-            sorted_index = len_argsort(out_en_sentences)
-            out_en_sentences = [out_en_sentences[i] for i in sorted_index]
-            out_cn_sentences = [out_cn_sentences[i] for i in sorted_index]
+
+        #out_en_sentences = [out_en_sentences[i] for i in out_en_sentences]
+        #out_cn_sentences = [out_cn_sentences[i] for i in out_cn_sentences]
 
         return out_en_sentences, out_cn_sentences
 
     train_en, train_cn = encode(train_en, train_cn, en_dict, cn_dict)
+    dev_en, dev_cn = encode(dev_en, dev_cn, en_dict, cn_dict)
 
     class CustomDataSet(Dataset):
 
@@ -170,7 +166,9 @@ def pretrain():
         def __getitem__(self, index):
             return self.data[index]
 
-    return CustomDataSet(train_en, train_cn)
+    train_data_set = CustomDataSet(train_en, train_cn)
+    dev_data_set = CustomDataSet(dev_en, dev_cn)
+    return train_data_set,dev_data_set
 
 #No attention seq2seq finsh
 class PlainEncoder(nn.Module):
@@ -219,7 +217,7 @@ class PlainDecoder(nn.Module):
         '''
         output = self.fc(output) #batch,seq,vocab
         output = F.log_softmax(output, dim= 2)
-        return output,None
+        return output,None  #batch,seq,vocab
 
 
 class PlainSeq2Seq(nn.Module):
@@ -259,54 +257,142 @@ class Attention(nn.Module):
     def __init__(self,input_size,attention_size):
         super(Attention, self).__init__()
         self.net = nn.Sequential(
-            nn.Linear( input_size, attention_size),
-            F.tanh(),
-            nn.Linear( attention_size,1)
-        )
+            nn.Linear(input_size, attention_size, bias=False),
+            nn.Tanh(),
+            nn.Linear(attention_size, 1, bias=False))
 
     '''
         enc_states:batch,seq, 2 * hidden #2 birdirection
         dec_state:batch,2 * hidden
-        
     '''
     def forward(self, enc_states, dec_state):
-        seq = enc_states.shape[1]
+        """
+            enc_states: (batch, seq, hidden)
+            dec_state: (batch, hidden)
+            """
+        # 将解码器隐藏状态广播到和编码器隐藏状态形状相同后进行连结
+        batch, seq, hidden = enc_states.shape
+        dec_states = dec_state[:, None, :].repeat(1, seq, 1)
 
-        dec_state = dec_state.expand(seq)
-        pass
+        enc_and_dec_states = t.cat((enc_states, dec_states), dim=2)
+        enc_and_dec_states = enc_and_dec_states.float()
+        e = self.net(enc_and_dec_states)  # (batch, seq, 1)  batch,word,score
+        alpha = F.softmax(t.squeeze(e, dim=2), dim=1)  # 在时间步维度做softmax运算
+        alpha = t.unsqueeze(alpha, dim=2) #batch,word,1 ->
+        enc_states = enc_states.float()
+        return (alpha * enc_states).sum(dim=1) #batch,hidden. context以这个维度返回主要是为了与Y(t-1)保持同一个维度
 
 
 class AttenDecoder(nn.Module):
     def __init__(self, vocab, dim, hidden, atten, dropout = 0.2, layer = 2):
-        super(PlainDecoder, self).__init__()
+        super(AttenDecoder, self).__init__()
         self.embed = nn.Embedding(vocab, dim)
         self.dropout = nn.Dropout(dropout)
-        self.gru = nn.GRU(dim, hidden, num_layers=layer, batch_first=True,
+        self.gru = nn.GRU(dim + hidden * 2, hidden, num_layers=layer, batch_first=True,
                    bidirectional=True, dropout=dropout)
         self.fc = nn.Linear( 2  * hidden,vocab) #2 is bidirection
         self.atten = atten
 
+    def begin_state(self, enc_state):
+        # 直接将编码器最终时间步的隐藏状态作为解码器的初始隐藏状态
+        return enc_state
 
-    def forward(self, text, hidden):
-        embed = self.embed(text)
-        embed = self.dropout(embed)
-        output, h_n = self.gru(embed, hidden)
-
-        self.atten()
-
+    def forward(self, cur_input, y_state, enc_states):
         '''
-            output:batch,seq,direction*hidden
-            h_0:layer*direction,batch,hidden
+            cur_input shape: batch
+            y_state: num_layers, batch,hidden
+            enc_states: batch,seq, hidden
         '''
-        output = self.fc(output) #batch,seq,vocab
-        output = F.log_softmax(output, dim= 2)
-        return output,None
+        # 解码器在最初时间步的输入是BOS
+        batch = enc_states.shape[0]
+        if True: #bidirectional
+            y_state_last = y_state[-2:, :, :] #2,batch,hidden
+            #dec_state:batch,2 * hidden
+            y_state_last = y_state_last.contiguous().transpose(0,1).contiguous().view(batch,-1)
 
 
+        c = self.atten(enc_states, y_state_last) #对于Decoder,只选择最上层的hidden, c：batch,hidden
+
+        #cat c which belong to this moment and cur_input
+        input_and_c = torch.cat((self.embed(cur_input), c), dim=1) #input_and_c:batch,hidden
+
+        #input_and_c.unsqueeze(1)——>batch,seq,hidden:batch,1,hidden
+        output, state = self.gru(input_and_c.unsqueeze(1), y_state)
+
+        #batch,1,hidden->batch,1,vocab -> batch,vocab
+        output = self.fc(output).squeeze(dim=1)
+
+        #
+        output = F.log_softmax(output, dim=1)
+        #output:batch,vocab
+        #state:layer,batch,hidden
+        #c:batch,hidden
+        return output,state,c
+
+class AttenSeq2Seq(nn.Module):
+    def __init__(self, encoder, decoder,device):
+        super(AttenSeq2Seq, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.device = device
 
 
+    def forward(self, source, source_len, target, target_len):
+
+        global EN_WORD2ID
+        #enc_output: batch,seq,embed
+        #enc_state:layer, batch,hidden
+        enc_output,enc_state = self.encoder(source)
+        batch = source.shape[0]
+        #num_layers, batch,hidden
+        dec_state = self.decoder.begin_state(enc_state)
+        # 解码器在最初时间步的输入是BOS
+        dec_input = torch.tensor([EN_WORD2ID['BOS']] * batch).to(self.device)
+
+        list_dec_output = []
+        list_atten = []
+
+        seq = target.shape[1]
+
+        for index in range(seq):  # Y shape: (batch, seq_len)
+            #dec_state: layer,batch,hidden:2*2,32,500
+            #dec_input:batch:32
+            #enc_output:batch,seq,hidden:32,20,1000
+            dec_output, dec_state,c = decoder(dec_input, dec_state, enc_output)
+            #dec_output：batch,vocab
+            list_dec_output.append(dec_output)
+            list_atten.append(c)
+
+            dec_input = target[:,index]  # 使用强制教学 逐个输入dec_input
+
+        #target：seq,batch,direction*hidden
+        model_output = t.stack(list_dec_output, dim = 1)
+        attens = t.stack(list_atten, dim = 1)
+        #model_output:batch,seq,vocab: 32,20,vacab
+        #attens:batch,hidden:32,1000
+        return model_output,attens
 
 
+    def translate(self, sources, source_len, target):
+        global CH_ID2WORD,EN_WORD2ID
+        #target:batch,seq,vocab
+        #attens:batch,hidden:32,1000
+
+        #batch,seq,vocab
+        batch = target.shape[0]
+        for item in range(batch):
+            setence = target[item]
+            #setence = t.unsqueeze(setence, dim = 0)
+            setence = t.argmax(setence, dim = 1)
+            setence = setence.detach().cpu().numpy()
+            cn_setence = [ CH_ID2WORD[word]  for word in setence]
+
+            source = sources[item].detach().cpu().numpy()[:source_len[item].detach().cpu().item()]
+            result = []
+            for word in cn_setence:
+                if word != "EOS":
+                    result.append(word)
+            print( "{}_{}".format([ EN_ID2WORD[word]  for word in source], result) )
 
 class LanguageCriterion(nn.Module):
     def __init__(self):
@@ -362,20 +448,14 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
             if batch_id % 1e3 == 0:
                 print(loss.item())
 
+    '''
     save_dir = "./model"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     best_mode_path = '{}/{}.pkl'.format(save_dir,"seq2seq")
+    '''
 
 
-    model.eval()
-    with t.no_grad():
-        for batch_id, batch_data in enumerate(train_dataloader):
-            source = batch_data['source'].to(device)
-            source_len = batch_data['source_len'].to(device)
-            target = batch_data['target'].to(device)
-            target_len = batch_data['target_len'].to(device)
-            model.translate(source, source_len, target, target_len)
 
     '''
     torch.save({
@@ -385,48 +465,23 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
     '''
 
 def dev(model, train_dataloader, optimizer, criterion, epochs, device):
-    model.train()
-    for epoch in range(epochs):
-
+    model.eval()
+    with t.no_grad():
         for batch_id, batch_data in enumerate(train_dataloader):
-            optimizer.zero_grad()
-
             source = batch_data['source'].to(device)
             source_len = batch_data['source_len'].to(device)
             target = batch_data['target'].to(device)
             target_len = batch_data['target_len'].to(device)
 
-
-
             output = model(source, source_len, target, target_len)
-            batch = target_len.shape[0]
-
-            target_max_len = t.max(target_len).item()
-            mask = t.arange(target_max_len).repeat(batch, 1).to(device) < target_len.view(-1, 1).expand(-1,target_max_len)
-            mask = mask.float()
-            loss = criterion(output[0], target, mask)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.)
-            optimizer.step()
-
-            if batch_id % 1e3 == 0:
-                print(loss.item())
-
-    save_dir = "./model"
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    best_mode_path = '{}/{}.pkl'.format(save_dir,"seq2seq")
-
-    torch.save({
-        'model': model.state_dict(),
-        'epoch': epoch
-    }, best_mode_path)
+            model.translate(source, source_len, output[0])
 
 
 '''
  In order to accelerate replicating,I simply test procedure. 
 '''
-if __name__ == '__main__':
+
+def plain_seq2seq():
     train_dataloader = pretrain()
     dataloader = DataLoader(dataset=train_dataloader, batch_size=BATCH_SIZE)
     encoder = PlainEncoder(EN_VOCAB, EMBEDDING_SIZE, HIDDEN_SIZE)
@@ -438,3 +493,23 @@ if __name__ == '__main__':
     device = torch.device('cuda' if USE_CUDA else 'cpu')
     seq2seq.to(device)
     train(seq2seq, dataloader, optimizer, criterion, EPOCHS, device)
+
+if __name__ == '__main__':
+    train_dataloader,dev_dataloader = pretrain()
+    train_dataloader = DataLoader(dataset=train_dataloader, batch_size=BATCH_SIZE)
+    dev_dataloader = DataLoader(dataset=dev_dataloader, batch_size=BATCH_SIZE)
+
+    encoder = PlainEncoder(EN_VOCAB, EMBEDDING_SIZE, HIDDEN_SIZE)
+    atten = Attention(HIDDEN_SIZE * 4, 300)  #attention neural cell
+
+    decoder = AttenDecoder(CH_VOCAB, EMBEDDING_SIZE, HIDDEN_SIZE, atten)
+
+    device = torch.device('cuda' if USE_CUDA else 'cpu')
+    seq2seq = AttenSeq2Seq(encoder, decoder, device)
+    criterion = LanguageCriterion()
+
+    optimizer = t.optim.Adam(seq2seq.parameters(), lr=LEARNING_RATE)
+
+    seq2seq.to(device)
+    train(seq2seq, train_dataloader, optimizer, criterion, EPOCHS, device)
+    dev(seq2seq, dev_dataloader, optimizer, criterion, EPOCHS, device)
