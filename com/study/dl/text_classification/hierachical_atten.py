@@ -31,8 +31,8 @@ from PIL import Image
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
-
-
+import pickle
+from sklearn.model_selection import train_test_split
 import nltk
 
 #hypotrical parameter
@@ -56,17 +56,25 @@ LEARNING_RATE = 1e-3  # the initial learning rate
 
 
 def pre_train():
+    yelp_json_path = "/home/demo1/womin/piguanghua/data/pre_data/yelp_academic_dataset_review.json"
+
+    yelp_data_path = yelp_json_path[0:-5] + "_data.pickle"
+    vocab_path = yelp_json_path[0:-5] + "_vocab.pickle"
+    data_file = open(yelp_data_path, 'rb')
+    data_x, data_y = pickle.load(data_file)
+
+    x_train, x_test, y_train, y_test =train_test_split(data_x, data_y, test_size=0.2)
     class CustomDataSet(Dataset):
 
-        def __init__(self):
-            self.data = self._load_dataset()
+        def __init__(self, x, y):
+            self.data = self._load_dataset(x, y)
 
-        def _load_dataset(self):
+        def _load_dataset(self, x, y):
             all_data = []
-            for i in range(4):
+            for index, item in enumerate(x):
                 data = {
-                    'source': np.random.randint(5, size = (25,30)),
-                    'target': 1,
+                    'source': item,
+                    'target': y[index],
                 }
                 all_data.append(data)
             return all_data
@@ -76,8 +84,10 @@ def pre_train():
 
         def __getitem__(self, index):
             return self.data[index]
+    train_dataset = CustomDataSet(x_train, y_train)
+    test_dataset = CustomDataSet(x_test, y_test)
 
-    return CustomDataSet()
+    return train_dataset,test_dataset
 
 class Sentence_Atten(nn.Module):
     #Uw hyper-parameter
@@ -179,8 +189,6 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
             source = batch_data['source'].to(device)
             target = batch_data['target'].to(device)
 
-
-
             output = model(source)
             loss = criterion(output, target)
             loss.backward()
@@ -189,17 +197,17 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
 
 
 if __name__ == '__main__':
-    train_dataloader = pre_train()
+    train_dataloader, test_dataloader = pre_train()
     train_dataloader = DataLoader(dataset=train_dataloader, batch_size=BATCH_SIZE)
 
 
-    vocab, dim, hidden, layer, sentence_hidden, class_num = 10, 20, 20, 2, 20,5
+    vocab, dim, hidden, layer, sentence_hidden, class_num = 46960, 20, 20, 2, 20,5
     sentence_atten = Sentence_Atten(hidden, dim)
     word_atten = Word_Atten(hidden, dim)
 
     model = HAN(vocab, dim, hidden, layer, word_atten, sentence_atten,
                  sentence_hidden, class_num)
-    device = torch.device('cuda' if False else 'cpu')
+    device = torch.device('cuda' if USE_CUDA else 'cpu')
     optimizer = t.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss()
 
