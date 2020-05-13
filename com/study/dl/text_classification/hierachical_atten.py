@@ -33,6 +33,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 import pickle
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
 import nltk
 
 #hypotrical parameter
@@ -51,9 +52,10 @@ EPOCHS = 10
 UNK_IDX = 0
 PAD_IDX = 1
 NUM_EPOCHS = 1
-BATCH_SIZE = 1  # the batch size
+BATCH_SIZE = 128  # the batch size
 LEARNING_RATE = 1e-3  # the initial learning rate
-
+LAYER = 2
+SENTENCE_HIDDEN = 300
 
 def pre_train():
     yelp_json_path = "/home/demo1/womin/piguanghua/data/pre_data/yelp_academic_dataset_review.json"
@@ -80,7 +82,7 @@ def pre_train():
             return all_data
 
         def __len__(self):
-            return 4
+            return len(self.data)
 
         def __getitem__(self, index):
             return self.data[index]
@@ -151,6 +153,7 @@ class HAN(nn.Module):
     def forward(self, sentences):
         #sentences: batch,sentence, words
         #word_embed: batch, sentences, words, embeds
+        sentences = sentences.long()
         word_embed = self.word_embed(sentences)
 
         #input: batch, seq, hidden
@@ -182,7 +185,6 @@ class HAN(nn.Module):
 def train(model, train_dataloader, optimizer, criterion, epochs, device):
     model.train()
     for epoch in range(epochs):
-
         for batch_id, batch_data in enumerate(train_dataloader):
             optimizer.zero_grad()
 
@@ -195,13 +197,42 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.)
             optimizer.step()
 
+            if batch_id % 1e4:
+                print(loss)
+
+    return model
+
+
+def dev(model, train_dataloader, optimizer, criterion, epochs, device):
+    model.eval()
+    with torch.no_grad():
+        y_true, y_pred = None, None
+        for batch_id, batch_data in enumerate(train_dataloader):
+            source = batch_data['source'].to(device)
+            targets = batch_data['target'].to(device)
+            output = model(source)
+            outputs = t.argmax(output, dim = 1)
+
+            if y_true is None:
+                y_true = targets
+                y_pred = outputs
+            else:
+                y_true = torch.cat((y_true, targets), dim=0)
+                y_pred = torch.cat((y_pred, outputs), dim=0)
+
+        y_true, y_pred = y_true.cpu().numpy(), y_pred.cpu().numpy()
+        test_f1 = classification_report(y_true, y_pred)
+        print(test_f1)
 
 if __name__ == '__main__':
     train_dataloader, test_dataloader = pre_train()
     train_dataloader = DataLoader(dataset=train_dataloader, batch_size=BATCH_SIZE)
-
+    test_dataloader = DataLoader(dataset=test_dataloader, batch_size=BATCH_SIZE)
 
     vocab, dim, hidden, layer, sentence_hidden, class_num = 46960, 20, 20, 2, 20,5
+    vocab, dim, hidden, layer, sentence_hidden, class_num = 46960, 300, 300, 2, 300, 5
+    #vocab, dim, hidden, layer, sentence_hidden, class_num = 46960, EMBEDDING_SIZE, HIDDEN_SIZE, LAYER, SENTENCE_HIDDEN, 5
+
     sentence_atten = Sentence_Atten(hidden, dim)
     word_atten = Word_Atten(hidden, dim)
 
@@ -212,8 +243,8 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
 
     model.to(device)
-    train(model, train_dataloader, optimizer, criterion, EPOCHS, device)
-
+    model =train(model, train_dataloader, optimizer, criterion, EPOCHS, device)
+    dev(model, train_dataloader, optimizer, criterion, EPOCHS, device)
 
 
 
