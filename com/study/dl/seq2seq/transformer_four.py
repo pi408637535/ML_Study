@@ -45,7 +45,7 @@ PAD_IDX = 1
 NUM_EPOCHS = 1
 BATCH_SIZE = 32  # the batch size
 LEARNING_RATE = 1e-3  # the initial learning rate
-EPOCHS = 10000
+EPOCHS = 20
 
 EN_WORD2ID = {}
 EN_ID2WORD = {}
@@ -323,7 +323,6 @@ class Decoder(nn.Module):
         return deco_outputs, deco_self_attens, deco_enc_attns
 
 
-
 class Transformer(nn.Module):
     def __init__(self, encoder, decoder, dim, vocab_size):
         super(Transformer, self).__init__()
@@ -337,6 +336,25 @@ class Transformer(nn.Module):
         deco_outputs, deco_self_attens, deco_enc_attns = decoder(target, enc_outputs)
         dec_logits = self.projection(deco_outputs) #dec_logits:batch,seq,vocab
         return dec_logits, enc_self_atten, deco_self_attens, deco_enc_attns
+
+    def translate(self, sources):
+        #sources: batch,seq,512
+        global CH_ID2WORD, EN_WORD2ID
+        batch = sources.shape[0]
+
+        for item in range(batch):
+            setence = target[item]
+            # setence = t.unsqueeze(setence, dim = 0)
+            setence = t.argmax(setence, dim=1)
+            setence = setence.detach().cpu().numpy()
+            cn_setence = [CH_ID2WORD[word] for word in setence]
+
+            source = sources[item].detach().cpu().numpy()[:25]
+            result = []
+            for word in cn_setence:
+                if word != "EOS":
+                    result.append(word)
+            print("{}_{}".format([EN_ID2WORD[word] for word in source], result))
 
 class LanguageCriterion(nn.Module):
     def __init__(self):
@@ -364,7 +382,7 @@ class LanguageCriterion(nn.Module):
 
 
 def showgraph(attn, file_name):
-    n_heads = 25
+    n_heads = 8
     attn = attn[-1].squeeze(0)[0]
     attn = attn.squeeze(0).data.numpy()
     fig = plt.figure(figsize=(n_heads, n_heads)) # [n_heads, n_heads]
@@ -415,7 +433,6 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
                 print(loss.item())
 
 
-
     print('first head of last state enc_self_attns')
     showgraph(enc_self_atten[-1].cpu(), "enc_self_atten")
 
@@ -425,6 +442,9 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
     print('first head of last state dec_enc_attns')
     showgraph(deco_enc_attns[-1].cpu(), "deco_enc_attns")
 
+    model.eval()
+    output = model(source, target)
+    print(model.translate(source))
 
 
 
