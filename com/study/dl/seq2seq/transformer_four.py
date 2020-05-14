@@ -26,10 +26,10 @@ import csv
 import cv2
 import numpy as np
 import pandas as pd
-from PIL import Image
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
+from numpy import random
+import matplotlib.pyplot as plt
 
 #hypotrical parameter
 USE_CUDA = t.cuda.is_available()
@@ -45,7 +45,7 @@ PAD_IDX = 1
 NUM_EPOCHS = 1
 BATCH_SIZE = 32  # the batch size
 LEARNING_RATE = 1e-3  # the initial learning rate
-EPOCHS = 10
+EPOCHS = 10000
 
 EN_WORD2ID = {}
 EN_ID2WORD = {}
@@ -72,6 +72,7 @@ def pre_train():
 
     train_en = ["Anthony Fauci says the best evidence shows the virus behind the pandemic was not made in a lab in China.".split(" ")]
     train_cn = ["安东尼·福奇 说，最 有力的 证据 表明，造成 疫情 的 新冠病毒 并 不是 中国的 实验室 人为 制造 的。".split(" ")]
+
     en_dict, en_total_words = build_dict(train_en)
     cn_dict, cn_total_words = build_dict(train_cn)
     EN_VOCAB = en_total_words
@@ -361,6 +362,29 @@ class LanguageCriterion(nn.Module):
         loss = loss.sum() / mask.sum()
         return loss
 
+
+def showgraph(attn, file_name):
+    n_heads = 25
+    attn = attn[-1].squeeze(0)[0]
+    attn = attn.squeeze(0).data.numpy()
+    fig = plt.figure(figsize=(n_heads, n_heads)) # [n_heads, n_heads]
+    ax = fig.add_subplot(1, 1, 1)
+    ax.matshow(attn, cmap='viridis')
+    #ax.set_xticklabels(['']+sentences[0].split(), fontdict={'fontsize': 14}, rotation=90)
+    #ax.set_yticklabels(['']+sentences[2].split(), fontdict={'fontsize': 14})
+
+    train_en = "Anthony Fauci says the best evidence shows the virus behind the pandemic was not made in a lab in China."
+    train_cn = "安东尼·福奇 说，最 有力的 证据 表明，造成 疫情 的 新冠病毒 并 不是 中国的 实验室 人为 制造 的。"
+
+    ax.set_xticklabels(['']+train_en.split(), fontdict={'fontsize': 25}, rotation=90)
+    ax.set_yticklabels(['']+train_cn.split(), fontdict={'fontsize': 25})
+
+    path = "/home/demo1/{}.png".format(file_name)
+    plt.savefig(path)
+    plt.show()
+
+
+
 def train(model, train_dataloader, optimizer, criterion, epochs, device):
     model.train()
     for epoch in range(epochs):
@@ -390,24 +414,22 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
             if batch_id % 1e3 == 0:
                 print(loss.item())
 
-    '''
-    save_dir = "./model"
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    best_mode_path = '{}/{}.pkl'.format(save_dir,"seq2seq")
-    '''
 
 
+    print('first head of last state enc_self_attns')
+    showgraph(enc_self_atten[-1].cpu(), "enc_self_atten")
 
-    '''
-    torch.save({
-        'model': model.state_dict(),
-        'epoch': epoch
-    }, best_mode_path)
-    '''
+    print('first head of last state dec_self_attns')
+    showgraph(deco_self_attens[-1].cpu(), "deco_self_attens")
+
+    print('first head of last state dec_enc_attns')
+    showgraph(deco_enc_attns[-1].cpu(), "deco_enc_attns")
+
+
 
 
 if __name__ == '__main__':
+
     batch, seq = 2, 5
     data = t.randint(10, size=(batch , seq))
     vocab, dim, d_k, head = 20, 512, 64, 8
@@ -430,4 +452,8 @@ if __name__ == '__main__':
 
     model.to(device)
 
+
     train(model, train_dataloader, optimizer, criterion, EPOCHS, device)
+
+
+
