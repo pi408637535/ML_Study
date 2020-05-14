@@ -99,6 +99,7 @@ class Encoder(nn.Module):
 
 
     def forward(self, texts, enc_self_attn_mask):
+        pass
 
 
 class Transformer(nn.Module):
