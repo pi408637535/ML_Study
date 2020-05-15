@@ -45,7 +45,7 @@ PAD_IDX = 1
 NUM_EPOCHS = 1
 BATCH_SIZE = 32  # the batch size
 LEARNING_RATE = 1e-3  # the initial learning rate
-EPOCHS = 20
+EPOCHS = 5000
 
 EN_WORD2ID = {}
 EN_ID2WORD = {}
@@ -337,6 +337,7 @@ class Transformer(nn.Module):
         dec_logits = self.projection(deco_outputs) #dec_logits:batch,seq,vocab
         return dec_logits, enc_self_atten, deco_self_attens, deco_enc_attns
 
+    '''
     def translate(self, sources):
         #sources: batch,seq,512
         global CH_ID2WORD, EN_WORD2ID
@@ -355,6 +356,7 @@ class Transformer(nn.Module):
                 if word != "EOS":
                     result.append(word)
             print("{}_{}".format([EN_ID2WORD[word] for word in source], result))
+    '''
 
 class LanguageCriterion(nn.Module):
     def __init__(self):
@@ -391,11 +393,11 @@ def showgraph(attn, file_name):
     #ax.set_xticklabels(['']+sentences[0].split(), fontdict={'fontsize': 14}, rotation=90)
     #ax.set_yticklabels(['']+sentences[2].split(), fontdict={'fontsize': 14})
 
-    train_en = "Anthony Fauci says the best evidence shows the virus behind the pandemic was not made in a lab in China."
-    train_cn = "安东尼·福奇 说，最 有力的 证据 表明，造成 疫情 的 新冠病毒 并 不是 中国的 实验室 人为 制造 的。"
+    train_en = "Anthony Fauci says the best evidence shows the "
+    train_cn = "安东尼·福奇 说，最 有力的 证据 表明，造成 疫情 "
 
-    ax.set_xticklabels(['']+train_en.split(), fontdict={'fontsize': 25}, rotation=90)
-    ax.set_yticklabels(['']+train_cn.split(), fontdict={'fontsize': 25})
+    ax.set_xticklabels(['']+train_en.split(" "), fontdict={'fontsize': 14}, rotation=90)
+    ax.set_yticklabels(['']+train_cn.split(" "), fontdict={'fontsize': 14})
 
     path = "/home/demo1/{}.png".format(file_name)
     plt.savefig(path)
@@ -444,7 +446,7 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
 
     model.eval()
     output = model(source, target)
-    print(model.translate(source))
+    #print(model.translate(source))
 
 
 
