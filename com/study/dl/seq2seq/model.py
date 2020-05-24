@@ -358,7 +358,7 @@ class AttenSeq2Seq(nn.Module):
             #dec_state: layer,batch,hidden:2*2,32,500
             #dec_input:batch:32
             #enc_output:batch,seq,hidden:32,20,1000
-            dec_output, dec_state,c = decoder(dec_input, dec_state, enc_output)
+            dec_output, dec_state,c = self.decoder(dec_input, dec_state, enc_output)
             #dec_output：batch,vocab
             list_dec_output.append(dec_output)
             list_atten.append(c)
@@ -482,7 +482,7 @@ def dev(model, train_dataloader, optimizer, criterion, epochs, device):
 '''
 
 def plain_seq2seq():
-    train_dataloader = pretrain()
+    train_dataloader,dev_dataloader = pretrain()
     dataloader = DataLoader(dataset=train_dataloader, batch_size=BATCH_SIZE)
     encoder = PlainEncoder(EN_VOCAB, EMBEDDING_SIZE, HIDDEN_SIZE)
     decoder = PlainDecoder(CH_VOCAB, EMBEDDING_SIZE, HIDDEN_SIZE)
@@ -494,13 +494,13 @@ def plain_seq2seq():
     seq2seq.to(device)
     train(seq2seq, dataloader, optimizer, criterion, EPOCHS, device)
 
-if __name__ == '__main__':
-    train_dataloader,dev_dataloader = pretrain()
+def attention_seq2seq():
+    train_dataloader, dev_dataloader = pretrain()
     train_dataloader = DataLoader(dataset=train_dataloader, batch_size=BATCH_SIZE)
     dev_dataloader = DataLoader(dataset=dev_dataloader, batch_size=BATCH_SIZE)
 
     encoder = PlainEncoder(EN_VOCAB, EMBEDDING_SIZE, HIDDEN_SIZE)
-    atten = Attention(HIDDEN_SIZE * 4, 300)  #attention neural cell
+    atten = Attention(HIDDEN_SIZE * 4, 300)  # attention neural cell
 
     decoder = AttenDecoder(CH_VOCAB, EMBEDDING_SIZE, HIDDEN_SIZE, atten)
 
@@ -513,3 +513,6 @@ if __name__ == '__main__':
     seq2seq.to(device)
     train(seq2seq, train_dataloader, optimizer, criterion, EPOCHS, device)
     dev(seq2seq, dev_dataloader, optimizer, criterion, EPOCHS, device)
+
+if __name__ == '__main__':
+    plain_seq2seq()
