@@ -56,6 +56,10 @@ EN_VOCAB = None
 CH_VOCAB = None
 MAX_LEN = 20
 
+'''
+    MAX_LEN:To limit the length of sentence.
+'''
+
 
 
 
@@ -72,16 +76,22 @@ def pretrain():
             for line in f:
                 line = line.strip().split("\t")
 
-                if len(line[0]) > MAX_LEN or len(line[1]) > MAX_LEN:
+                if len(line[0].split(" ")) > MAX_LEN or len(line[1].split(" ")) > MAX_LEN:
                     continue
 
                 en.append(["BOS"] + nltk.word_tokenize(line[0].lower()) + ["EOS"])
                 # split chinese sentence into characters
-                cn.append(["BOS"] + [c for c in line[1]] + ["EOS"])
+                #Todo chatbot进行修改
+                cn.append(["BOS"] + nltk.word_tokenize(line[1].lower()) + ["EOS"])
+                #cn.append(["BOS"] + [c for c in line[1]] + ["EOS"])
         return en, cn
 
     train_file = "/home/demo1/womin/piguanghua/data/cmn.txt"
     dev_file = "/home/demo1/womin/piguanghua/data/cmn_dev.txt"
+
+    #train_file = "/home/demo1/womin/piguanghua/data/buaa/source_target.txt"
+    #dev_file = "/home/demo1/womin/piguanghua/data/buaa/source_target.txt"
+
     train_en, train_cn = load_data(train_file)
     dev_en, dev_cn = load_data(dev_file)
 
@@ -516,3 +526,4 @@ def attention_seq2seq():
 
 if __name__ == '__main__':
     plain_seq2seq()
+    attention_seq2seq()
