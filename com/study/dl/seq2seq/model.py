@@ -40,11 +40,11 @@ if USE_CUDA:
 UNK_IDX = 0
 PAD_IDX = 1
 NUM_EPOCHS = 1
-BATCH_SIZE = 32  # the batch size
+BATCH_SIZE = 64  # the batch size
 LEARNING_RATE = 1e-3  # the initial learning rate
 EMBEDDING_SIZE = 300
 HIDDEN_SIZE = 500
-EPOCHS = 10
+EPOCHS = 10000
 
 
 
@@ -86,11 +86,11 @@ def pretrain():
                 #cn.append(["BOS"] + [c for c in line[1]] + ["EOS"])
         return en, cn
 
-    train_file = "/home/demo1/womin/piguanghua/data/cmn.txt"
-    dev_file = "/home/demo1/womin/piguanghua/data/cmn_dev.txt"
+    #train_file = "/home/demo1/womin/piguanghua/data/cmn.txt"
+    #dev_file = "/home/demo1/womin/piguanghua/data/cmn_dev.txt"
 
-    #train_file = "/home/demo1/womin/piguanghua/data/buaa/source_target.txt"
-    #dev_file = "/home/demo1/womin/piguanghua/data/buaa/source_target.txt"
+    train_file = "/home/demo1/womin/piguanghua/data/buaa/source_target.txt"
+    dev_file = "/home/demo1/womin/piguanghua/data/buaa/source_target.txt"
 
     train_en, train_cn = load_data(train_file)
     dev_en, dev_cn = load_data(dev_file)
@@ -227,7 +227,7 @@ class PlainDecoder(nn.Module):
         '''
         output = self.fc(output) #batch,seq,vocab
         output = F.log_softmax(output, dim= 2)
-        return output,None  #batch,seq,vocab
+        return output,None,h_n  #batch,seq,vocab
 
 
 class PlainSeq2Seq(nn.Module):
@@ -239,29 +239,36 @@ class PlainSeq2Seq(nn.Module):
 
     def forward(self, source, source_len, target, target_len):
         output,h_0 = self.encoder(source)
-        target,atten = self.decoder(target, h_0)
+        target,atten,h_0 = self.decoder(target, h_0)
         #target：seq,batch,direction*hidden
         return target,atten
 
-    def translate(self, sources, source_len, target, target_len):
-        global CH_ID2WORD,EN_WORD2ID
-        output, h_0 = self.encoder(sources)
-        target, atten = self.decoder(target, h_0)
-        #batch,seq,vocab
-        batch = target.shape[0]
-        for item in range(batch):
-            setence = target[item]
-            #setence = t.unsqueeze(setence, dim = 0)
-            setence = t.argmax(setence, dim = 1)
-            setence = setence.detach().cpu().numpy()
-            en_setence = [ EN_ID2WORD[word]  for word in setence]
+    def translate(self, sources, source_len, device):
+        global CH_ID2WORD,EN_WORD2ID,MAX_LEN
+        #sources:batch,seq:1,seq
+        encoder_outputs, h_0 = self.encoder(sources)
+        decoder_hidden = h_0 #layer * direction, batch,hidden
+        # Decoder的初始输入是SOS
+        decoder_input = torch.ones(1, 1, device=device, dtype=torch.long) * EN_WORD2ID["BOS"]
+        # 用于保存解码结果的tensor
+        all_tokens = torch.zeros([0], device=device, dtype=torch.long)
+        all_scores = torch.zeros([0], device=device)
 
-            source = sources[item].detach().cpu().numpy()[:source_len[item].detach().cpu().item()]
-            result = []
-            for word in en_setence:
-                if word != "EOS":
-                    result.append(word)
-            print( "{}_{}".format([ CH_ID2WORD[word]  for word in source], result) )
+        for _ in range(MAX_LEN):
+            # Decoder forward一步
+            decoder_output, atten, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
+            # decoder_outputs是(batch=1, vob_size)
+            # 使用max返回概率最大的词和得分
+            decoder_scores, decoder_input = torch.max(decoder_output, dim=2)
+            # 把解码结果保存到all_tokens和all_scores里
+            all_tokens = torch.cat((all_tokens, decoder_input.squeeze(dim = 1)), dim=0)
+            all_scores = torch.cat((all_scores, decoder_scores.squeeze(dim = 1)), dim=0)
+            # decoder_input是当前时刻输出的词的ID，这是个一维的向量，因为max会减少一维。
+            # 但是decoder要求有一个batch维度，因此用unsqueeze增加batch维度。
+
+
+        out = [ CH_ID2WORD.get(item.detach().cpu().item(), "UNK" ) for item in all_tokens ]
+        return out
 
 class Attention(nn.Module):
     def __init__(self,input_size,attention_size):
@@ -458,21 +465,20 @@ def train(model, train_dataloader, optimizer, criterion, epochs, device):
             if batch_id % 1e3 == 0:
                 print(loss.item())
 
+
     '''
     save_dir = "./model"
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     best_mode_path = '{}/{}.pkl'.format(save_dir,"seq2seq")
-    '''
-
-
-
-    '''
     torch.save({
         'model': model.state_dict(),
         'epoch': epoch
     }, best_mode_path)
     '''
+    return model
+
+
 
 def dev(model, train_dataloader, optimizer, criterion, epochs, device):
     model.eval()
@@ -487,9 +493,46 @@ def dev(model, train_dataloader, optimizer, criterion, epochs, device):
             model.translate(source, source_len, output[0])
 
 
-'''
- In order to accelerate replicating,I simply test procedure. 
-'''
+def evaluateInput(model, device,input_sentence):
+    import unicodedata
+    import re
+
+    # 把Unicode字符串变成ASCII
+    # 参考https://stackoverflow.com/a/518232/2809427
+    def unicodeToAscii(s):
+        return ''.join(
+            c for c in unicodedata.normalize('NFD', s)
+            if unicodedata.category(c) != 'Mn'
+        )
+
+    # 句子归一化
+    def normalizeString(s):
+        # 变成小写、去掉前后空格，然后unicode变成ascii
+        s = unicodeToAscii(s.lower().strip())
+        # 在标点前增加空格，这样把标点当成一个词
+        s = re.sub(r"([.!?])", r" \1", s)
+        # 字母和标点之外的字符都变成空格
+        s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
+        # 因为把不用的字符都变成空格，所以可能存在多个连续空格
+        # 下面的正则替换把多个空格变成一个空格，最后去掉前后空格
+        s = re.sub(r"\s+", r" ", s).strip()
+        return s
+
+
+    global EN_WORD2ID,EN_ID2WORD,CH_WORD2ID,CH_ID2WORD,EN_VOCAB,CH_VOCAB,MAX_LEN
+    input_sentence = normalizeString(input_sentence)
+    indexes_batch = [ EN_WORD2ID.get(item, EN_WORD2ID["UNK"]) for item in input_sentence.split(" ") ] #[]
+    indexes_batch = [EN_WORD2ID['BOS']] + indexes_batch + [EN_WORD2ID["EOS"]]
+
+    input_batch = t.LongTensor(indexes_batch).unsqueeze(dim = 0)
+    lengths = t.LongTensor([ len(indexes_batch) ] )
+
+    input_batch = input_batch.to(device)
+    lengths = lengths.to(device)
+
+    result = model.translate(input_batch, lengths, device)
+    print(result)
+
 
 def plain_seq2seq():
     train_dataloader,dev_dataloader = pretrain()
@@ -502,7 +545,9 @@ def plain_seq2seq():
     optimizer = t.optim.Adam(seq2seq.parameters(), lr=LEARNING_RATE)
     device = torch.device('cuda' if USE_CUDA else 'cpu')
     seq2seq.to(device)
-    train(seq2seq, dataloader, optimizer, criterion, EPOCHS, device)
+    model = train(seq2seq, dataloader, optimizer, criterion, EPOCHS, device)
+    input_sentence = "what's you name?"
+    evaluateInput(model, device, input_sentence)
 
 def attention_seq2seq():
     train_dataloader, dev_dataloader = pretrain()
@@ -524,6 +569,11 @@ def attention_seq2seq():
     train(seq2seq, train_dataloader, optimizer, criterion, EPOCHS, device)
     dev(seq2seq, dev_dataloader, optimizer, criterion, EPOCHS, device)
 
+
+
+
+
 if __name__ == '__main__':
-    plain_seq2seq()
-    attention_seq2seq()
+    model = plain_seq2seq()
+
+    #attention_seq2seq()
