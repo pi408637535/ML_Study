@@ -216,7 +216,7 @@ class MultiHeadAttention(nn.Module):
             contiguous().transpose(1, 2)  # Q:batch,head,seq,d_k:batch,8,seq,64
 
         atten_mask = t.unsqueeze(atten_mask, dim = 1) #batch,1,seq,seq, 第一个seq代表句长，第二个seq代表这个单词与其所在的seq dot score
-        atten, context = self.atten_model(Q, K, V, atten_mask)
+        atten, context = self.atten_model(Q, K, V, atten_mask) #atten:batch,head,seq,seq:1,8,25,25
         context = context.contiguous().transpose(1,2).contiguous().\
             view(batch, -1, self.head * self.d_k)
         Z =  self.Wz(context)
