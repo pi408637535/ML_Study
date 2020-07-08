@@ -55,6 +55,8 @@ class BiLSTM_CRF(nn.Module):
         self.tag_to_ix = tag_to_ix
         self.tagset_size = len(tag_to_ix)
 
+        self.idx2tag = {v: k for k, v in self.tag_to_ix.items()}
+
         self.word_embeds = nn.Embedding(vocab_size, embedding_dim)
         self.lstm = nn.LSTM(embedding_dim, hidden_dim // 2,
                             num_layers=1, bidirectional=True)
@@ -129,15 +131,42 @@ class BiLSTM_CRF(nn.Module):
         seq_length, tag_size = feats.size()
         f = torch.zeros(seq_length, tag_size)
 
+        init_vvars = torch.full((1, self.tagset_size), -10000.)
+        init_vvars[0][self.tag_to_ix[START_TAG]] = 0
 
-        for step in range(1, len(seq_length)):
-            for j in range(self.tag_size):
-                f[step,j] =
+        forward_var = init_vvars
+
+        pi = [ [-1 for j in range(tag_size) ] for i in range(seq_length) ]
+
+        for i,feat in enumerate(feats):
+            viterbi_var = []
+
+            for tag in range(tag_size):
+                next_tag = forward_var + self.transitions[tag]
+                best_tag_id = next_tag.argmax(dim=1)
+
+                viterbi_var.append(next_tag[0][best_tag_id])
+                pi[i][tag] = best_tag_id.numpy()[0]
+            forward_var = (t.cat( viterbi_var, dim = 0 ) + feat).view(1,-1)
+
+        # Transition to STOP_TAG
+        terminal_var = forward_var + self.transitions[self.tag_to_ix[STOP_TAG]]
+        best_tag_id = terminal_var.argmax(dim=1)
+
+        path = [best_tag_id.numpy()[0]]
+        x = seq_length - 1
+        y = best_tag_id
+
+        for k in range(1, seq_length):
+            path.append(pi[x][y])  #STOP_TAG has been add so I lift this one
+            y = pi[x][y]
+            x -= 1
 
 
 
 
-        pass
+        data = [self.idx2tag[ele] for ele in path[::-1]]
+        print(data)
 
     def neg_log_likelihood(self, sentence, tags):
         feats = self._get_lstm_features(sentence)
@@ -150,8 +179,8 @@ class BiLSTM_CRF(nn.Module):
         lstm_feats = self._get_lstm_features(sentence)
 
         # Find the best path, given the features.
-        score, tag_seq = self._viterbi_decode(lstm_feats)
-        return score, tag_seq
+        tag_seq = self._viterbi_decode(lstm_feats)
+        return tag_seq
 
 #####################################################################
 # Run training
@@ -179,16 +208,25 @@ for sentence, tags in training_data:
 
 tag_to_ix = {"B": 0, "I": 1, "O": 2, START_TAG: 3, STOP_TAG: 4}
 
+#USE_CUDA = t.cuda.is_available()
+USE_CUDA = False
+device = torch.device('cuda' if USE_CUDA else 'cpu')
+
 model = BiLSTM_CRF(len(word_to_ix), tag_to_ix, EMBEDDING_DIM, HIDDEN_DIM)
+
+model = model.to(device)
 optimizer = optim.SGD(model.parameters(), lr=0.01, weight_decay=1e-4)
 
 # Check predictions before training
 with torch.no_grad():
     precheck_sent = prepare_sequence(training_data[0][0], word_to_ix)
     precheck_tags = torch.tensor([tag_to_ix[t] for t in training_data[0][1]], dtype=torch.long)
-    #print(model(precheck_sent))
 
-# Make sure prepare_sequence from earlier in the LSTM section is loaded
+    if USE_CUDA:
+        precheck_sent = precheck_sent.to(device)
+
+    print(model(precheck_sent))
+
 for epoch in range(
         300):  # again, normally you would NOT do 300 epochs, it is toy data
     for sentence, tags in training_data:
@@ -200,6 +238,10 @@ for epoch in range(
         # turn them into Tensors of word indices.
         sentence_in = prepare_sequence(sentence, word_to_ix)
         targets = torch.tensor([tag_to_ix[t] for t in tags], dtype=torch.long)
+
+        if USE_CUDA:
+            sentence_in = sentence_in.to(device)
+            targets = targets.to(targets)
 
         # Step 3. Run our forward pass.
         loss = model.neg_log_likelihood(sentence_in, targets)
@@ -213,26 +255,3 @@ for epoch in range(
 with torch.no_grad():
     precheck_sent = prepare_sequence(training_data[0][0], word_to_ix)
     print(model(precheck_sent))
-# We got it!
-
-
-######################################################################
-# Exercise: A new loss function for discriminative tagging
-# --------------------------------------------------------
-#
-# It wasn't really necessary for us to create a computation graph when
-# doing decoding, since we do not backpropagate from the viterbi path
-# score. Since we have it anyway, try training the tagger where the loss
-# function is the difference between the Viterbi path score and the score
-# of the gold-standard path. It should be clear that this function is
-# non-negative and 0 when the predicted tag sequence is the correct tag
-# sequence. This is essentially *structured perceptron*.
-#
-# This modification should be short, since Viterbi and score\_sentence are
-# already implemented. This is an example of the shape of the computation
-# graph *depending on the training instance*. Although I haven't tried
-# implementing this in a static toolkit, I imagine that it is possible but
-# much less straightforward.
-#
-# Pick up some real data and do a comparison!
-#
