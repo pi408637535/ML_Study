@@ -76,7 +76,10 @@ class BiLSTM_CRF(nn.Module):
 
         self.hidden = self.init_hidden()
 
+
+
     def init_hidden(self):
+        nn.init.uniform_(self.transitions, -0.1, 0.1)
         return (torch.randn(2, 1, self.hidden_dim // 2),
                 torch.randn(2, 1, self.hidden_dim // 2))
 
@@ -91,17 +94,20 @@ class BiLSTM_CRF(nn.Module):
         for feat in feats: #feats:sequence,tag
             word_tag_score = [] # 计算逐个word->tag score
             for tag in range(self.tagset_size):
-                word_emission = feat[tag].expand(1, self.tagset_size)
-                word_tag_transition = self.transitions[tag, :]
+                word_emission = feat[tag].expand(1, self.tagset_size) #word_emission: batch,tags :1,tags
+                word_tag_transition = self.transitions[tag, :] #
                 word_score = previous + word_emission + word_tag_transition
                 word_score = log_sum_exp(word_score)
+
+                #word_score = t.logsumexp(word_score, dim=1)
 
                 word_tag_score.append(word_score.view(1))
 
             previous = t.cat(word_tag_score, dim=0).view(1, -1)
 
         terminal_var = previous + self.transitions[self.tag_to_ix[STOP_TAG]]
-        all_path_score = log_sum_exp(terminal_var)
+        #all_path_score = log_sum_exp(terminal_var)
+        all_path_score = t.logsumexp(terminal_var, dim=1)
         return all_path_score
 
 
