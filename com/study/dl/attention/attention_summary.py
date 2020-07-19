@@ -122,7 +122,7 @@ class MLPAtten(nn.Module):
         self.hidden = hidden
         self.dir = 2 if bidirection == True else  1
         self.lstm_w = nn.Parameter( t.randn( (self.dir * hidden, 1 )  ))
-        self.hidden_w = nn.Parameter(t.randn((self.dir * hidden, 1)))
+        self.hidden_w = nn.Parameter(t.randn((self.dir * hidden, 1)) )
         self.all_w = nn.Linear(seq, self.dir * self.hidden)
 
     def forward(self, lstm_output, last_hidden):
